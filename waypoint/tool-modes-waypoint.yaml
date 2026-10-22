@@ -1,0 +1,238 @@
+# agentgateway as an Istio ambient waypoint, fronting one MCP server through four MCP tool modes.
+#
+#   agent (ambient pod) ──ztunnel/HBONE──▶ agw-waypoint ──▶ EnterpriseAgentgatewayBackend (toolMode) ──▶ trading-desk MCP server
+#
+#   http://mcp-standard.mcp-tool-modes/mcp    toolMode: Standard    (passthrough baseline)
+#   http://mcp-search.mcp-tool-modes/mcp      toolMode: Search      (get_tool + invoke_tool)
+#   http://mcp-code.mcp-tool-modes/mcp        toolMode: Code        (run_code)
+#   http://mcp-codesearch.mcp-tool-modes/mcp  toolMode: CodeSearch  (get_tool + run_code)
+#
+# Requires: Solo Enterprise for Istio (ambient) + Solo Enterprise for agentgateway installed with
+#           --set istio.autoEnabled=true. Tested on agentgateway v2026.9.3, Istio 1.31.1-solo.
+# The two ConfigMaps (MCP server code, agent proxy config) are created by deploy.sh.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-tool-modes
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+# ---------------- the MCP server (36 tools, one 186 KB response) ----------------
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: trading-desk-mcp, namespace: mcp-tool-modes }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: trading-desk-mcp, namespace: mcp-tool-modes }
+spec:
+  selector: { matchLabels: { app: trading-desk-mcp } }
+  template:
+    metadata: { labels: { app: trading-desk-mcp } }
+    spec:
+      serviceAccountName: trading-desk-mcp
+      containers:
+        - name: server
+          image: python:3.12-slim
+          command: ["sh", "-c", "pip install --quiet --no-cache-dir 'mcp==1.30.0' && python /app/server.py"]
+          env: [{ name: PORT, value: "8000" }]
+          ports: [{ containerPort: 8000 }]
+          readinessProbe: { tcpSocket: { port: 8000 }, periodSeconds: 3, failureThreshold: 60 }
+          volumeMounts: [{ name: app, mountPath: /app }]
+      volumes: [{ name: app, configMap: { name: trading-desk-server } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: trading-desk-mcp, namespace: mcp-tool-modes }
+spec:
+  selector: { app: trading-desk-mcp }
+  ports: [{ name: http, port: 8000, targetPort: 8000, appProtocol: http }]
+---
+# ---------------- the agentgateway waypoint ----------------
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agw-waypoint
+  namespace: mcp-tool-modes
+  labels:
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: enterprise-agentgateway-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE
+---
+# ---------------- four backends, identical except toolMode ----------------
+# Use static.backendRef (the Service), not static.host. With backendRef the waypoint reaches the MCP
+# server over HBONE with its own SPIFFE identity, so the L4 AuthorizationPolicy below can match it.
+# With static.host the connection arrives without a mesh identity and that policy rejects it.
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata: { name: mcp-standard, namespace: mcp-tool-modes }
+spec:
+  entMcp:
+    toolMode: Standard
+    targets:
+      - name: desk
+        static: { backendRef: { name: trading-desk-mcp }, port: 8000, path: /mcp, protocol: StreamableHTTP }
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata: { name: mcp-search, namespace: mcp-tool-modes }
+spec:
+  entMcp:
+    toolMode: Search
+    targets:
+      - name: desk
+        static: { backendRef: { name: trading-desk-mcp }, port: 8000, path: /mcp, protocol: StreamableHTTP }
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata: { name: mcp-code, namespace: mcp-tool-modes }
+spec:
+  entMcp:
+    toolMode: Code
+    codeMode: { timeout: 30s, cpuTimeout: 5s }
+    targets:
+      - name: desk
+        static: { backendRef: { name: trading-desk-mcp }, port: 8000, path: /mcp, protocol: StreamableHTTP }
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata: { name: mcp-codesearch, namespace: mcp-tool-modes }
+spec:
+  entMcp:
+    toolMode: CodeSearch
+    codeMode: { timeout: 30s, cpuTimeout: 5s }
+    targets:
+      - name: desk
+        static: { backendRef: { name: trading-desk-mcp }, port: 8000, path: /mcp, protocol: StreamableHTTP }
+---
+# ---------------- four MCP hostnames owned by the waypoint (no pods behind them) ----------------
+apiVersion: v1
+kind: Service
+metadata: { name: mcp-standard, namespace: mcp-tool-modes, labels: { istio.io/use-waypoint: agw-waypoint } }
+spec:
+  selector: { nonexistent: "true" }
+  ports: [{ name: http, port: 80, targetPort: 80, appProtocol: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mcp-search, namespace: mcp-tool-modes, labels: { istio.io/use-waypoint: agw-waypoint } }
+spec:
+  selector: { nonexistent: "true" }
+  ports: [{ name: http, port: 80, targetPort: 80, appProtocol: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mcp-code, namespace: mcp-tool-modes, labels: { istio.io/use-waypoint: agw-waypoint } }
+spec:
+  selector: { nonexistent: "true" }
+  ports: [{ name: http, port: 80, targetPort: 80, appProtocol: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mcp-codesearch, namespace: mcp-tool-modes, labels: { istio.io/use-waypoint: agw-waypoint } }
+spec:
+  selector: { nonexistent: "true" }
+  ports: [{ name: http, port: 80, targetPort: 80, appProtocol: http }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: mcp-standard, namespace: mcp-tool-modes }
+spec:
+  parentRefs: [{ group: "", kind: Service, name: mcp-standard }]
+  rules: [{ backendRefs: [{ group: enterpriseagentgateway.solo.io, kind: EnterpriseAgentgatewayBackend, name: mcp-standard }] }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: mcp-search, namespace: mcp-tool-modes }
+spec:
+  parentRefs: [{ group: "", kind: Service, name: mcp-search }]
+  rules: [{ backendRefs: [{ group: enterpriseagentgateway.solo.io, kind: EnterpriseAgentgatewayBackend, name: mcp-search }] }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: mcp-code, namespace: mcp-tool-modes }
+spec:
+  parentRefs: [{ group: "", kind: Service, name: mcp-code }]
+  rules: [{ backendRefs: [{ group: enterpriseagentgateway.solo.io, kind: EnterpriseAgentgatewayBackend, name: mcp-code }] }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: mcp-codesearch, namespace: mcp-tool-modes }
+spec:
+  parentRefs: [{ group: "", kind: Service, name: mcp-codesearch }]
+  rules: [{ backendRefs: [{ group: enterpriseagentgateway.solo.io, kind: EnterpriseAgentgatewayBackend, name: mcp-codesearch }] }]
+---
+# ---------------- policy ----------------
+# Only the "agent" workload identity (SPIFFE, proven by ztunnel mTLS) may reach the MCP endpoints.
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata: { name: waypoint-authz, namespace: mcp-tool-modes }
+spec:
+  targetRefs:
+    - { group: gateway.networking.k8s.io, kind: Gateway, name: agw-waypoint }
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+          - 'source.identity.serviceAccount == "agent"'
+---
+# Nobody but the waypoint may talk to the MCP server pod directly (ztunnel, L4).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: mcp-server-only-from-waypoint, namespace: mcp-tool-modes }
+spec:
+  selector: { matchLabels: { app: trading-desk-mcp } }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/mcp-tool-modes/sa/agw-waypoint"]
+---
+# ---------------- the agent side ----------------
+# An in-mesh proxy standing in for an agent runtime. Its calls to mcp-*.mcp-tool-modes leave
+# through ztunnel and are claimed by the waypoint, exactly like a real in-mesh agent's would.
+# The harness reaches it with: kubectl -n mcp-tool-modes port-forward deploy/agent 18940:8080
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: agent, namespace: mcp-tool-modes }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: agent, namespace: mcp-tool-modes }
+spec:
+  selector: { matchLabels: { app: agent } }
+  template:
+    metadata: { labels: { app: agent } }
+    spec:
+      serviceAccountName: agent
+      containers:
+        - name: proxy
+          image: nginx:1.27-alpine
+          ports: [{ containerPort: 8080 }]
+          volumeMounts: [{ name: conf, mountPath: /etc/nginx/conf.d }]
+      volumes: [{ name: conf, configMap: { name: agent-proxy } }]
+---
+# A second in-mesh workload with a different identity, to prove the waypoint policy denies it.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: rogue, namespace: mcp-tool-modes }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: rogue, namespace: mcp-tool-modes }
+spec:
+  selector: { matchLabels: { app: rogue } }
+  template:
+    metadata: { labels: { app: rogue } }
+    spec:
+      serviceAccountName: rogue
+      containers:
+        - name: curl
+          image: curlimages/curl:8.5.0
+          command: ["sleep", "infinity"]

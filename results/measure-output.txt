@@ -1,0 +1,62 @@
+> standard run 1/3 ...
+  3 turns, 7 calls, 222,782 tokens, $0.920, 22.9s, correct=True  calls=['get_product_spec', 'get_positions', 'get_account', 'get_account', 'get_account', 'get_account', 'get_account']
+> standard run 2/3 ...
+  3 turns, 7 calls, 222,834 tokens, $0.921, 20.2s, correct=True  calls=['get_product_spec', 'get_positions', 'get_account', 'get_account', 'get_account', 'get_account', 'get_account']
+> standard run 3/3 ...
+  3 turns, 7 calls, 223,242 tokens, $0.927, 22.7s, correct=True  calls=['get_product_spec', 'get_positions', 'get_account', 'get_account', 'get_account', 'get_account', 'get_account']
+> search run 1/3 ...
+  5 turns, 10 calls, 285,621 tokens, $1.180, 22.9s, correct=True  calls=['get_tool', 'get_tool', 'invoke_tool', 'invoke_tool', 'get_tool', 'invoke_tool', 'invoke_tool', 'invoke_tool', 'invoke_tool', 'invoke_tool']
+> search run 2/3 ...
+  5 turns, 10 calls, 285,470 tokens, $1.179, 22.2s, correct=True  calls=['get_tool', 'get_tool', 'invoke_tool', 'invoke_tool', 'get_tool', 'invoke_tool', 'invoke_tool', 'invoke_tool', 'invoke_tool', 'invoke_tool']
+> search run 3/3 ...
+  5 turns, 10 calls, 285,600 tokens, $1.179, 22.5s, correct=True  calls=['get_tool', 'get_tool', 'invoke_tool', 'invoke_tool', 'get_tool', 'invoke_tool', 'invoke_tool', 'invoke_tool', 'invoke_tool', 'invoke_tool']
+> code run 1/3 ...
+  5 turns, 4 calls, 338,845 tokens, $1.388, 32.6s, correct=True  calls=['run_code', 'run_code', 'run_code', 'run_code']
+> code run 2/3 ...
+  5 turns, 4 calls, 49,628 tokens, $0.234, 24.4s, correct=True  calls=['run_code', 'run_code', 'run_code', 'run_code']
+> code run 3/3 ...
+  5 turns, 4 calls, 51,475 tokens, $0.248, 26.8s, correct=True  calls=['run_code', 'run_code', 'run_code', 'run_code']
+> codesearch run 1/3 ...
+  5 turns, 6 calls, 18,804 tokens, $0.122, 29.6s, correct=True  calls=['get_tool', 'get_tool', 'get_tool', 'run_code', 'run_code', 'run_code']
+> codesearch run 2/3 ...
+  7 turns, 8 calls, 31,196 tokens, $0.181, 34.1s, correct=True  calls=['get_tool', 'get_tool', 'get_tool', 'run_code', 'run_code', 'run_code', 'run_code', 'run_code']
+> codesearch run 3/3 ...
+  6 turns, 7 calls, 22,325 tokens, $0.135, 27.8s, correct=True  calls=['get_tool', 'get_tool', 'get_tool', 'run_code', 'run_code', 'run_code', 'run_code']
+
+Model claude-opus-5-5, task: top-5 LCX notional exposure (median of 3 run(s) per route)
+
+route       tools startup tok turns calls result KB  input tok output tok  total tok  vs std  cost $  secs  correct
+-------------------------------------------------------------------------------------------------------------------
+standard       36      12,483     3     7     184.3    221,000      1,834    222,834    base   0.921    20  YES
+search          2       1,062     5    10     185.5    283,289      2,311    285,600    +28%   1.179    22  YES
+code            1       8,015     5     4       3.2     48,867      2,608     51,475    -77%   0.248    27  YES
+codesearch      2       1,464     6     7       3.3     19,465      2,860     22,325    -90%   0.135    28  YES
+
+standard: input tokens per turn (each turn re-reads everything before it)
+  turn 1:   12,483  -> get_product_spec, get_positions
+  turn 2:  103,439  -> get_account, get_account, get_account, get_account, get_account
+  turn 3:  105,078  -> final answer
+
+search: input tokens per turn (each turn re-reads everything before it)
+  turn 1:    1,062  -> get_tool(get_positions), get_tool(get_product_spec)
+  turn 2:    1,541  -> invoke_tool(get_product_spec), invoke_tool(get_positions)
+  turn 3:   92,569  -> get_tool(get_account)
+  turn 4:   93,420  -> invoke_tool(get_account), invoke_tool(get_account), invoke_tool(get_account), invoke_tool(get_account), invoke_tool(get_account)
+  turn 5:   94,697  -> final answer
+
+code: input tokens per turn (each turn re-reads everything before it)
+  turn 1:    8,015  -> run_code
+  turn 2:    8,979  -> run_code
+  turn 3:    9,654  -> run_code
+  turn 4:   10,769  -> run_code
+  turn 5:   11,450  -> final answer
+
+codesearch: input tokens per turn (each turn re-reads everything before it)
+  turn 1:    1,464  -> get_tool(get_positions), get_tool(get_product_spec), get_tool(get_account)
+  turn 2:    2,088  -> run_code
+  turn 3:    2,958  -> run_code
+  turn 4:    3,676  -> run_code
+  turn 5:    4,269  -> run_code
+  turn 6:    5,010  -> final answer
+
+full detail (every tool call, final answers) -> results/results.json
